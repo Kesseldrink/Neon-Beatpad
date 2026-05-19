@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Audio Beat-Maker</title>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+
+        .controls {
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            background: rgba(30, 41, 59, 0.7);
+            padding: 15px 30px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        button.play-btn {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button.play-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.5);
+        }
+
+        /* Das Raster für die Buttons */
+        .grid {
+            display: grid;
+            grid-template-columns: auto repeat(16, 1fr);
+            gap: 5px;
+            background: rgba(30, 41, 59, 0.7);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .track-label {
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            padding-right: 15px;
+            color: #94a3b8;
+        }
+
+        /* Die einzelnen Step-Buttons */
+        .step {
+            width: 35px;
+            height: 35px;
+            background-color: #334155;
+            border: 2px solid #1e293b;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.1s;
+        }
+
+        /* Wenn der Button vom User aktiviert wurde */
+        .step.active {
+            background-color: #3b82f6;
+            box-shadow: 0 0 10px #3b82f6;
+        }
+
+        /* Das Lauflicht (die aktuelle Position) */
+        .step.playing {
+            border-color: #fde047;
+            box-shadow: 0 0 15px #fde047;
+            background-color: #fef08a;
+        }
+
+        .step.active.playing {
+            background-color: #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Beat-Maker 🎧</h1>
+
+    <div class="controls">
+        <button class="play-btn" id="playBtn" onclick="togglePlay()">▶ Play</button>
+        <div>
+            <label for="bpm">BPM (Tempo): </label>
+            <input type="number" id="bpm" value="120" min="60" max="200" style="width: 60px;">
+        </div>
+    </div>
+
+    <!-- Hier baut JavaScript gleich unser 16er-Raster rein -->
+    <div class="grid" id="drumGrid"></div>
+
+    <script>
+        // --- 1. SETUP DER INSTRUMENTE (Web Audio API) ---
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) {
+                // Erstellt den unsichtbaren Synthesizer im Browser
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // Baut eine tiefe, kurze Schallwelle (Kick)
+        function playKick() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            // Frequenz fällt schnell ab (typisch für Bass-Drums)
+            osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+            // Lautstärke wird schnell leiser
+            gain.gain.setValueAtTime(1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+            osc.start(audioCtx.currentTime);
+            osc.stop(audioCtx.currentTime + 0.5);
+        }
+
+        // Baut ein hohes, kurzes Rauschen (Hi-Hat)
+        function playHiHat() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = "square";
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.frequency.setValueAtTime(8000, audioCtx.currentTime);
+
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+
+            osc.start(audioCtx.currentTime);
+            osc.stop(audioCtx.currentTime + 0.05);
+        }
+
+        // --- 2. RASTER AUFBAUEN ---
+        const tracks = ["Hi-Hat", "Snare (Beta)", "Kick"];
+        const gridElement = document.getElementById("drumGrid");
+        const stepsCount = 16;
+        let gridData = []; // Speichert, welcher Button an oder aus ist
+
+        for (let i = 0; i < tracks.length; i++) {
+            // Label links (Track-Name)
+            let label = document.createElement("div");
+            label.className = "track-label";
+            label.innerText = tracks[i];
+            gridElement.appendChild(label);
+
+            gridData[i] = [];
+
+            // 16 Buttons pro Zeile
+            for (let j = 0; j < stepsCount; j++) {
+                let btn = document.createElement("div");
+                btn.className = "step";
+                btn.id = `step-${i}-${j}`;
+                gridData[i][j] = false; // Am Anfang sind alle aus
+
+                // Klick-Funktion zum An-/Ausschalten
+                btn.onclick = () => {
+                    gridData[i][j] = !gridData[i][j];
+                    btn.classList.toggle("active");
+                };
+
+                gridElement.appendChild(btn);
+            }
+        }
+
+        // --- 3. DER SEQUENCER (Das Lauflicht) ---
+        let isPlaying = false;
+        let currentStep = 0;
+        let loopInterval;
+
+        function togglePlay() {
+            initAudio(); // Wichtig: Audio darf erst starten, wenn der User klickt!
+
+            const playBtn = document.getElementById("playBtn");
+            if (isPlaying) {
+                clearInterval(loopInterval);
+                playBtn.innerText = "▶ Play";
+                playBtn.style.background = "linear-gradient(135deg, #10b981, #059669)";
+            } else {
+                let bpm = document.getElementById("bpm").value;
+                // Berechnet die Zeit zwischen zwei Schritten (16tel Noten)
+                let stepTime = (60 / bpm) / 4 * 1000;
+
+                loopInterval = setInterval(playStep, stepTime);
+                playBtn.innerText = "⏸ Stop";
+                playBtn.style.background = "linear-gradient(135deg, #ef4444, #dc2626)";
+            }
+            isPlaying = !isPlaying;
+        }
+
+        function playStep() {
+            // Alte Lauflichter entfernen
+            document.querySelectorAll(".playing").forEach(el => el.classList.remove("playing"));
+
+            // Für jeden Track checken, ob der aktuelle Step aktiv ist
+            for (let track = 0; track < tracks.length; track++) {
+                let stepBtn = document.getElementById(`step-${track}-${currentStep}`);
+                stepBtn.classList.add("playing"); // Lauflicht setzen
+
+                if (gridData[track][currentStep]) {
+                    // Sound abspielen, je nachdem in welcher Zeile wir sind
+                    if (tracks[track] === "Kick") playKick();
+                    if (tracks[track] === "Hi-Hat") playHiHat();
+                    if (tracks[track] === "Snare (Beta)") {
+                        // Da echter Snare-Sound kompliziert ist, mixen wir Kick und Hi-Hat
+                        playKick();
+                        playHiHat();
+                    }
+                }
+            }
+
+            // Einen Schritt weitergehen (und nach 15 wieder auf 0 springen)
+            currentStep = (currentStep + 1) % stepsCount;
+        }
+    </script>
+</body>
+</html>
